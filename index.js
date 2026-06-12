@@ -8,6 +8,8 @@ app.use(express.json());
 
 const flixhq = new MOVIES.FlixHQ();
 const sflix = new MOVIES.SFlix();
+const goku = new MOVIES.Goku();
+const himovies = new MOVIES.HiMovies();
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -80,26 +82,30 @@ app.get('/api/resolve', async (req, res) => {
     return res.status(400).json({ error: 'Title parameter is required' });
   }
 
-  // Try FlixHQ first
-  try {
-    const result = await resolveProvider(flixhq, title, year, req);
-    return res.json(result);
-  } catch (err1) {
-    console.warn(`FlixHQ failed, trying SFlix fallback. Error: ${err1.message || err1}`);
-    
-    // Fall back to SFlix
+  const providers = [
+    { name: 'FlixHQ', instance: flixhq },
+    { name: 'SFlix', instance: sflix },
+    { name: 'Goku', instance: goku },
+    { name: 'HiMovies', instance: himovies }
+  ];
+
+  const errors = {};
+
+  for (const prov of providers) {
     try {
-      const result = await resolveProvider(sflix, title, year, req);
+      const result = await resolveProvider(prov.instance, title, year, req);
       return res.json(result);
-    } catch (err2) {
-      console.error(`SFlix fallback failed as well. Error: ${err2.message || err2}`);
-      return res.status(500).json({ 
-        error: 'All stream providers failed.',
-        flixhqError: err1.message || err1,
-        sflixError: err2.message || err2
-      });
+    } catch (err) {
+      console.warn(`${prov.name} failed: ${err.message || err}`);
+      errors[`${prov.name.toLowerCase()}Error`] = err.message || err;
     }
   }
+
+  // If we reach here, all providers failed
+  res.status(500).json({
+    error: 'All stream providers failed.',
+    details: errors
+  });
 });
 
 const PORT = process.env.PORT || 3000;
