@@ -113,25 +113,33 @@ app.get('/api/resolve', async (req, res) => {
     { name: 'HiMovies', instance: himovies }
   ];
 
-  const errors = {};
-
-  for (const prov of providers) {
+  // Map each provider to a promise that resolves or rejects
+  const promises = providers.map(async (prov) => {
     try {
       // Allow max 8 seconds total for a single provider resolution flow
-      const result = await timeoutPromise(resolveProvider(prov.instance, title, year, req), 8000);
-      return res.json(result);
+      return await timeoutPromise(resolveProvider(prov.instance, title, year, req), 8000);
     } catch (err) {
       console.warn(`${prov.name} failed: ${err.message || err}`);
-      errors[prov.name.toLowerCase()] = err.message || err;
+      // Reject with the error message so Promise.any aggregate error has it
+      throw new Error(err.message || err);
     }
-  }
-
-  // If we reach here, all providers failed
-  res.status(500).json({
-    error: 'All stream providers failed.',
-    details: errors
   });
+
+  try {
+    const result = await Promise.any(promises);
+    return res.json(result);
+  } catch (aggregateError) {
+    const details = {};
+    providers.forEach((prov, idx) => {
+      details[prov.name.toLowerCase()] = aggregateError.errors[idx]?.message || aggregateError.errors[idx] || 'Unknown error';
+    });
+    res.status(500).json({
+      error: 'All stream providers failed.',
+      details: details
+    });
+  }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
