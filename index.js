@@ -16,11 +16,33 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'private-cinema-api' });
 });
 
+// Helper function to add a timeout to any promise
+function timeoutPromise(promise, ms) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Request timed out after ${ms}ms`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).then(
+    (result) => {
+      clearTimeout(timeoutId);
+      return result;
+    },
+    (err) => {
+      clearTimeout(timeoutId);
+      throw err;
+    }
+  );
+}
+
 // Helper function to resolve using a given provider
 async function resolveProvider(provider, title, year, req) {
   const providerName = provider.name || 'Provider';
   console.log(`Searching ${providerName} for: "${title}" (${year || 'any year'})`);
-  const searchResults = await provider.search(title);
+  
+  // Wrap search in 5s timeout
+  const searchResults = await timeoutPromise(provider.search(title), 5000);
   
   if (!searchResults || !searchResults.results || searchResults.results.length === 0) {
     throw new Error(`No media matches found on ${providerName}.`);
@@ -37,8 +59,8 @@ async function resolveProvider(provider, title, year, req) {
 
   console.log(`Matched on ${providerName}: "${matchedItem.title}" (ID: ${matchedItem.id})`);
 
-  // Fetch details
-  const mediaInfo = await provider.fetchMediaInfo(matchedItem.id);
+  // Wrap media info in 5s timeout
+  const mediaInfo = await timeoutPromise(provider.fetchMediaInfo(matchedItem.id), 5000);
   if (!mediaInfo || !mediaInfo.episodes || mediaInfo.episodes.length === 0) {
     throw new Error(`Could not fetch media episodes on ${providerName}.`);
   }
@@ -59,7 +81,9 @@ async function resolveProvider(provider, title, year, req) {
   }
 
   console.log(`Fetching stream sources for episode ID: ${targetEpisodeId} on ${providerName}`);
-  const sources = await provider.fetchEpisodeSources(targetEpisodeId, matchedItem.id);
+  
+  // Wrap episode sources in 7s timeout
+  const sources = await timeoutPromise(provider.fetchEpisodeSources(targetEpisodeId, matchedItem.id), 7000);
 
   if (!sources || !sources.sources || sources.sources.length === 0) {
     throw new Error(`No streaming sources found on ${providerName}.`);
@@ -93,11 +117,12 @@ app.get('/api/resolve', async (req, res) => {
 
   for (const prov of providers) {
     try {
-      const result = await resolveProvider(prov.instance, title, year, req);
+      // Allow max 8 seconds total for a single provider resolution flow
+      const result = await timeoutPromise(resolveProvider(prov.instance, title, year, req), 8000);
       return res.json(result);
     } catch (err) {
       console.warn(`${prov.name} failed: ${err.message || err}`);
-      errors[`${prov.name.toLowerCase()}Error`] = err.message || err;
+      errors[prov.name.toLowerCase()] = err.message || err;
     }
   }
 
